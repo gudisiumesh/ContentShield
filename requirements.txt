@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-multipart
+psycopg[binary]
+python-dotenv
+detoxify
+transformers
+torch
+easyocr
