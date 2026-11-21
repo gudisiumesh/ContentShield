@@ -17,15 +17,16 @@ load_dotenv()
 
 app = FastAPI()
 
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
-
-producer = None
-
-if KAFKA_BOOTSTRAP_SERVERS:
-    producer = KafkaProducer(
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_serializer=lambda data: json.dumps(data).encode("utf-8")
+if producer:
+    producer.send(
+        "content-submissions",
+        {
+            "submission_id": submission_id,
+            "analysis_run_id": analysis_run_id
+        }
     )
+    producer.flush()
+
 
 # Allow requests from the React frontend
 app.add_middleware(
