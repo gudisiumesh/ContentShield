@@ -7,3 +7,4 @@ detoxify
 transformers
 torch
 easyocr
+kafka-python
