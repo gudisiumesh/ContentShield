@@ -16,11 +16,15 @@ from fastapi.staticfiles import StaticFiles
 load_dotenv()
 
 app = FastAPI()
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
 
-producer = KafkaProducer(
-    bootstrap_servers="localhost:9092",
-    value_serializer=lambda data: json.dumps(data).encode("utf-8")
-)
+producer = None
+
+if KAFKA_BOOTSTRAP_SERVERS:
+    producer = KafkaProducer(
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        value_serializer=lambda data: json.dumps(data).encode("utf-8")
+    )
 
 
 # Allow requests from the React frontend
