@@ -248,6 +248,7 @@ async def create_submission(
     analysis_run_id = str(uuid.uuid4())
 
     # Send submission ID and analysis run ID to Kafka
+    if producer:
     producer.send(
         "content-submissions",
         {
@@ -255,7 +256,6 @@ async def create_submission(
             "analysis_run_id": analysis_run_id
         }
     )
-
     producer.flush()
 
     return {
