@@ -1,12 +1,13 @@
 
 import os
 import uuid
-from pathlib import Path
 import json
+from pathlib import Path
+
 import cloudinary
 import cloudinary.uploader
-
 import psycopg
+
 from dotenv import load_dotenv
 from kafka import KafkaProducer
 
@@ -15,7 +16,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 
+# --------------------------------------------------
+# Environment configuration
+# --------------------------------------------------
+
 load_dotenv()
+
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
     api_key=os.getenv("CLOUDINARY_API_KEY"),
@@ -23,29 +29,82 @@ cloudinary.config(
     secure=True
 )
 
-app = FastAPI()
 
-producer = KafkaProducer(
-    bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS"),
-    security_protocol="SASL_SSL",
-    sasl_mechanism="SCRAM-SHA-256",
-    sasl_plain_username=os.getenv("KAFKA_SASL_USERNAME"),
-    sasl_plain_password=os.getenv("KAFKA_SASL_PASSWORD"),
-    value_serializer=lambda data: json.dumps(data).encode("utf-8")
-)
+# --------------------------------------------------
+# FastAPI application
+# --------------------------------------------------
+
+app = FastAPI(title="ContentShield API")
 
 
-# Allow requests from the React frontend
+# --------------------------------------------------
+# CORS configuration
+# --------------------------------------------------
+
+# Add your Vercel frontend URL here after deployment.
+FRONTEND_ORIGINS = [
+    "http://localhost:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=FRONTEND_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 
-# Database connection settings
+# --------------------------------------------------
+# Upload directory
+# --------------------------------------------------
+
+UPLOAD_FOLDER = Path(__file__).resolve().parent / "uploads"
+
+# Create directory if it does not exist.
+UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+
+app.mount(
+    "/uploads",
+    StaticFiles(directory=UPLOAD_FOLDER),
+    name="uploads"
+)
+
+
+# --------------------------------------------------
+# Kafka producer
+# --------------------------------------------------
+
+producer = None
+
+
+def get_kafka_producer():
+    global producer
+
+    if producer is None:
+        try:
+            producer = KafkaProducer(
+                bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS"),
+                security_protocol="SASL_SSL",
+                sasl_mechanism="SCRAM-SHA-256",
+                sasl_plain_username=os.getenv("KAFKA_SASL_USERNAME"),
+                sasl_plain_password=os.getenv("KAFKA_SASL_PASSWORD"),
+                value_serializer=lambda data: json.dumps(data).encode("utf-8"),
+                request_timeout_ms=30000
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Kafka service is currently unavailable."
+            ) from exc
+
+    return producer
+
+
+# --------------------------------------------------
+# Database connection
+# --------------------------------------------------
+
 def get_db_connection():
     return psycopg.connect(
         host=os.getenv("DB_HOST"),
@@ -56,47 +115,58 @@ def get_db_connection():
     )
 
 
-# Folder where uploaded files will be stored
-UPLOAD_FOLDER = Path(__file__).resolve().parent / "uploads"
-
-app.mount(
-    "/uploads",
-    StaticFiles(directory=UPLOAD_FOLDER),
-    name="uploads"
-)
-
-
-# Save uploaded files permanently
+# --------------------------------------------------
+# Cloudinary file upload
+# --------------------------------------------------
 
 async def save_uploaded_file(file: UploadFile, folder_name: str):
+
     if not file or not file.filename:
         return None
 
-    result = cloudinary.uploader.upload(
-        file.file,
-        folder=f"contentshield/{folder_name}",
-        public_id=uuid.uuid4().hex,
-        resource_type="image"
-    )
+    try:
+        result = cloudinary.uploader.upload(
+            file.file,
+            folder=f"contentshield/{folder_name}",
+            public_id=uuid.uuid4().hex,
+            resource_type="image"
+        )
 
-    return {
-        "original_filename": file.filename,
-        "saved_path": result["secure_url"],
-        "public_id": result["public_id"]
-    }
+        return {
+            "original_filename": file.filename,
+            "saved_path": result["secure_url"],
+            "public_id": result["public_id"]
+        }
 
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="File upload to cloud storage failed."
+        ) from exc
+
+
+# --------------------------------------------------
 # Home endpoint
+# --------------------------------------------------
+
 @app.get("/")
 def home():
-    return {"message": "ContentShield API is running"}
+    return {
+        "message": "ContentShield API is running"
+    }
 
 
-#
+# --------------------------------------------------
+# Get all submissions
+# --------------------------------------------------
+
 @app.get("/submissions")
 def get_submissions():
+
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
+
                 cursor.execute("""
                     SELECT
                         s.id,
@@ -120,6 +190,7 @@ def get_submissions():
         submissions = {}
 
         for row in rows:
+
             submission_id = row[0]
 
             if submission_id not in submissions:
@@ -141,15 +212,20 @@ def get_submissions():
 
         return list(submissions.values())
 
-    except psycopg.Error:
+    except psycopg.Error as exc:
         raise HTTPException(
             status_code=500,
             detail="Database error. Could not retrieve submissions."
-        )
+        ) from exc
 
-# ContentShield submission endpoint
+
+# --------------------------------------------------
+# Create submission
+# --------------------------------------------------
+
 @app.post("/submissions")
 async def create_submission(
+
     contentTitle: str = Form(...),
     category: str = Form(...),
     language: str = Form(...),
@@ -158,7 +234,8 @@ async def create_submission(
 
     basic_info_image: UploadFile | None = File(None),
     app_icon: UploadFile | None = File(None),
-    screenshots: list[UploadFile] = File(default=[]),
+    screenshots: list[UploadFile] = File(default=[])
+
 ):
 
     if len(screenshots) > 8:
@@ -167,27 +244,37 @@ async def create_submission(
             detail="Maximum 8 screenshots are allowed"
         )
 
-    # Save uploaded files
-    saved_basic_image = await save_uploaded_file(
-        basic_info_image,
-        "basic_info_images"
-    ) if basic_info_image else None
+    # Upload files to Cloudinary.
 
-    saved_app_icon = await save_uploaded_file(
-        app_icon,
-        "app_icons"
-    ) if app_icon else None
+    saved_basic_image = (
+        await save_uploaded_file(
+            basic_info_image,
+            "basic_info_images"
+        )
+        if basic_info_image else None
+    )
+
+    saved_app_icon = (
+        await save_uploaded_file(
+            app_icon,
+            "app_icons"
+        )
+        if app_icon else None
+    )
 
     saved_screenshots = []
 
     for file in screenshots:
+
         saved_file = await save_uploaded_file(
             file,
             "screenshots"
         )
+
         saved_screenshots.append(saved_file)
 
-    # Save submission details in PostgreSQL
+    # Save submission in PostgreSQL.
+
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
@@ -221,8 +308,10 @@ async def create_submission(
 
                 submission_id = cursor.fetchone()[0]
 
-                # Save screenshot paths with their submission ID
+                # Save screenshot paths.
+
                 for screenshot in saved_screenshots:
+
                     cursor.execute(
                         """
                         INSERT INTO submission_screenshots (
@@ -237,25 +326,34 @@ async def create_submission(
                         )
                     )
 
-    except psycopg.Error:
+    except psycopg.Error as exc:
         raise HTTPException(
             status_code=500,
             detail="Database error. Submission could not be saved."
-        )
+        ) from exc
 
-    # Generate a unique ID for this analysis run
+    # Generate analysis run ID.
+
     analysis_run_id = str(uuid.uuid4())
 
-    # Send submission ID and analysis run ID to Kafka
-    producer.send(
-        "content-submissions",
-        {
-            "submission_id": submission_id,
-            "analysis_run_id": analysis_run_id
-        }
-    )
+    # Send submission event to Kafka.
 
-    producer.flush()
+    try:
+        kafka_producer = get_kafka_producer()
+
+        kafka_producer.send(
+            "content-submissions",
+            {
+                "submission_id": submission_id,
+                "analysis_run_id": analysis_run_id
+            }
+        ).get(timeout=30)
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Submission saved, but Kafka event delivery failed."
+        ) from exc
 
     return {
         "message": "Content submission received and saved successfully",
@@ -275,8 +373,10 @@ async def create_submission(
     }
 
 
+# --------------------------------------------------
+# Get moderation results
+# --------------------------------------------------
 
-# Get moderation results for a submission
 @app.get("/submissions/{submission_id}/moderation-results")
 def get_moderation_results(submission_id: int):
 
@@ -284,7 +384,8 @@ def get_moderation_results(submission_id: int):
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
 
-                # Check whether the submission exists
+                # Check submission exists.
+
                 cursor.execute(
                     """
                     SELECT id
@@ -302,7 +403,8 @@ def get_moderation_results(submission_id: int):
                         detail="Submission not found"
                     )
 
-                # Retrieve the latest analysis
+                # Get latest moderation result.
+
                 cursor.execute(
                     """
                     SELECT
@@ -337,7 +439,8 @@ def get_moderation_results(submission_id: int):
 
                 moderation_result_id = moderation[0]
 
-                # Retrieve image moderation results
+                # Get image moderation results.
+
                 cursor.execute(
                     """
                     SELECT
@@ -357,18 +460,21 @@ def get_moderation_results(submission_id: int):
 
                 image_rows = cursor.fetchall()
 
-        # Prepare image results for React
-       
-        # Prepare image results for React
+        # Prepare image results for React.
+
         images = []
 
         for row in image_rows:
+
             image_path = row[1]
 
-            if image_path.startswith("https://") or image_path.startswith("http://"):
+            if image_path and image_path.startswith(
+                ("https://", "http://")
+            ):
                 image_url = image_path
+
             else:
-                image_path = image_path.replace("\\", "/")
+                image_path = (image_path or "").replace("\\", "/")
                 image_url = "/" + image_path.lstrip("/")
 
             images.append({
@@ -380,7 +486,6 @@ def get_moderation_results(submission_id: int):
                 "nsfw_model": row[5],
                 "created_at": row[6]
             })
-
 
         return {
             "submission_id": submission_id,
@@ -401,8 +506,8 @@ def get_moderation_results(submission_id: int):
     except HTTPException:
         raise
 
-    except psycopg.Error:
+    except psycopg.Error as exc:
         raise HTTPException(
             status_code=500,
             detail="Database error. Could not retrieve moderation results."
-        )
+        ) from exc
