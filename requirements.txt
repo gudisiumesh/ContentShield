@@ -9,3 +9,4 @@ torch
 easyocr
 cloudinary
 requests
+kafka-python
