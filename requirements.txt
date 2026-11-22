@@ -7,4 +7,5 @@ detoxify
 transformers
 torch
 easyocr
-kafka-python
+cloudinary
+requests
