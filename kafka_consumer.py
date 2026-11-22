@@ -10,6 +10,8 @@ from psycopg.types.json import Jsonb
 from text_moderation import analyze_text
 from pathlib import Path
 import json
+import requests
+import tempfile
 
 
 load_dotenv()
@@ -260,11 +262,14 @@ def mark_analysis_failed(moderation_result_id, error):
     finally:
         conn.close()
 
-
-# Kafka consumer
+#kafka consumer
 consumer = KafkaConsumer(
     "content-submissions",
-    bootstrap_servers="localhost:9092",
+    bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS"),
+    security_protocol="SASL_SSL",
+    sasl_mechanism="SCRAM-SHA-256",
+    sasl_plain_username=os.getenv("KAFKA_SASL_USERNAME"),
+    sasl_plain_password=os.getenv("KAFKA_SASL_PASSWORD"),
     group_id="contentshield-ml-group",
     auto_offset_reset="earliest",
     enable_auto_commit=False,
@@ -344,17 +349,32 @@ for message in consumer:
         for image_item in image_items:
 
             stored_path = image_item["image_path"]
-            full_path = BASE_DIR / stored_path
 
-            # Extract text from this image
-            extracted_text = extract_text_from_image(str(full_path))
+            # Download Cloudinary images or use existing local files
+            if stored_path.startswith(("https://", "http://")):
+                response = requests.get(stored_path, timeout=30)
+                response.raise_for_status()
+
+                with tempfile.NamedTemporaryFile(suffix=".jpg") as temp_file:
+                    temp_file.write(response.content)
+                    temp_file.flush()
+
+                    image_to_process = temp_file.name
+
+                    extracted_text = extract_text_from_image(image_to_process)
+
+                    nsfw_scores = analyze_image(image_to_process)
+
+            else:
+                full_path = BASE_DIR / stored_path
+
+                extracted_text = extract_text_from_image(str(full_path))
+
+                nsfw_scores = analyze_image(str(full_path))
 
             extracted_image_text.append(extracted_text)
 
             print("Extracted image text:", extracted_text)
-
-            # Analyze this image using the NSFW model
-            nsfw_scores = analyze_image(str(full_path))
 
             image_results.append({
                 "image_path": stored_path,
@@ -364,6 +384,7 @@ for message in consumer:
             })
 
             print("Image moderation scores:", nsfw_scores)
+
 
         # Combine original submission text
         original_text = " ".join([
