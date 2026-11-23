@@ -1,16 +1,54 @@
-# React + Vite
+# ContentShield – AI-Powered Content Screening Platform
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+ContentShield is an AI-powered content screening platform designed to analyze and moderate text and image content using artificial intelligence.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Text Moderation:** Detects potentially harmful text using AI.
+- **Image Moderation:** Analyzes uploaded images using AI models.
+- **OCR:** Extracts text from images using EasyOCR.
+- **Automated Processing:** Uses Apache Kafka for asynchronous content processing.
+- **Database Integration:** Uses PostgreSQL to store application data.
+- **React Interface:** Provides a user-friendly frontend for submitting and reviewing content.
 
-## React Compiler
+## Technologies Used
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+**Frontend**
+- React.js
+- JavaScript
+- HTML
+- CSS
+- Vite
 
-## Expanding the ESLint configuration
+**Backend**
+- Python
+- FastAPI
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+**AI and Processing**
+- Detoxify
+- Transformers
+- PyTorch
+- EasyOCR
+
+**Database and Messaging**
+- PostgreSQL
+- Apache Kafka
+- Docker
+
+## Project Structure
+
+- `React frontend files` – React application
+- `main.py` – FastAPI application
+- `kafka_consumer.py` – Kafka consumer
+- `text_moderation.py` – Text moderation
+- `image_moderation.py` – Image moderation
+- `image_ocr.py` – Image text extraction
+- `requirements.txt` – Python dependencies
+
+## Project Objective
+
+The objective of ContentShield is to provide an integrated platform for screening text and image content through AI-powered moderation and automated processing.
+
+## Author
+
+**Umesh Kumar**
