@@ -40,13 +40,13 @@ function SubmissionResults({ basicInfo, appDetails, onPrevious, onNext }) {
       })
 
       // Send data to FastAPI
-      const response = await fetch(
-        'http://127.0.0.1:8000/submissions',
-        {
-          method: 'POST',
-          body: formData
-        }
-      )
+    const response = await fetch(
+  `${import.meta.env.VITE_API_URL}/submissions`,
+  {
+    method: 'POST',
+    body: formData
+  }
+)
 
       const result = await response.json()
 
