@@ -41,14 +41,12 @@ app = FastAPI(title="ContentShield API")
 # CORS configuration
 # --------------------------------------------------
 
-# Add your Vercel frontend URL here after deployment.
-FRONTEND_ORIGINS = [
-    "http://localhost:5173",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=FRONTEND_ORIGINS,
+    allow_origins=[
+        "http://localhost:5175",
+        "https://content-shield-bay.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
@@ -61,7 +59,6 @@ app.add_middleware(
 
 UPLOAD_FOLDER = Path(__file__).resolve().parent / "uploads"
 
-# Create directory if it does not exist.
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
 app.mount(
@@ -244,8 +241,6 @@ async def create_submission(
             detail="Maximum 8 screenshots are allowed"
         )
 
-    # Upload files to Cloudinary.
-
     saved_basic_image = (
         await save_uploaded_file(
             basic_info_image,
@@ -307,8 +302,6 @@ async def create_submission(
                 )
 
                 submission_id = cursor.fetchone()[0]
-
-                # Save screenshot paths.
 
                 for screenshot in saved_screenshots:
 
@@ -384,8 +377,6 @@ def get_moderation_results(submission_id: int):
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
 
-                # Check submission exists.
-
                 cursor.execute(
                     """
                     SELECT id
@@ -402,8 +393,6 @@ def get_moderation_results(submission_id: int):
                         status_code=404,
                         detail="Submission not found"
                     )
-
-                # Get latest moderation result.
 
                 cursor.execute(
                     """
@@ -439,8 +428,6 @@ def get_moderation_results(submission_id: int):
 
                 moderation_result_id = moderation[0]
 
-                # Get image moderation results.
-
                 cursor.execute(
                     """
                     SELECT
@@ -459,8 +446,6 @@ def get_moderation_results(submission_id: int):
                 )
 
                 image_rows = cursor.fetchall()
-
-        # Prepare image results for React.
 
         images = []
 
