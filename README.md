@@ -1,6 +1,6 @@
 # ContentShield – AI-Powered Content Screening Platform
 
-ContentShield is an AI-powered content screening platform designed to analyze and moderate text and image content using artificial intelligence. It helps identify potentially harmful content through automated text moderation, image analysis and Optical Character Recognition (OCR).
+ContentShield is an AI-powered content screening platform designed to analyze and moderate text and image content using artificial intelligence. It helps identify potentially harmful content through automated text moderation, image analysis, and Optical Character Recognition (OCR).
 
 ## Features
 
@@ -8,7 +8,7 @@ ContentShield is an AI-powered content screening platform designed to analyze an
 - **Image Moderation:** Analyzes uploaded images using an NSFW detection model.
 - **OCR (Optical Character Recognition):** Extracts text from images using EasyOCR.
 - **Automated Processing:** Uses local Apache Kafka for asynchronous content processing.
-- **Database Integration:** Stores user information, submissions and moderation results in PostgreSQL.
+- **Database Integration:** Stores user information, submissions, and moderation results in PostgreSQL.
 - **User Authentication:** Provides signup and login functionality with JWT-based authentication.
 - **React Interface:** Provides a user-friendly frontend for submitting and reviewing content.
 - **Moderation Scores:** Generates AI-based text and image moderation scores.
@@ -17,7 +17,6 @@ ContentShield is an AI-powered content screening platform designed to analyze an
 ## Technologies Used
 
 ### Frontend
-
 - React.js
 - JavaScript
 - HTML
@@ -25,14 +24,12 @@ ContentShield is an AI-powered content screening platform designed to analyze an
 - Vite
 
 ### Backend
-
 - Python
 - FastAPI
 - Uvicorn
 - Pydantic
 
 ### AI and Image Processing
-
 - Detoxify
 - Transformers
 - PyTorch
@@ -40,13 +37,11 @@ ContentShield is an AI-powered content screening platform designed to analyze an
 - Falconsai NSFW Image Detection Model
 
 ### Database and Messaging
-
 - PostgreSQL
 - Apache Kafka (Local)
 - psycopg
 
 ### Authentication
-
 - JWT (JSON Web Tokens)
 - pwdlib
 
@@ -63,7 +58,7 @@ The application follows an asynchronous content-processing workflow.
 7. The NSFW detection model analyzes the uploaded images.
 8. Detoxify analyzes the original submission text together with the text extracted from images.
 9. Moderation scores and analysis results are saved in PostgreSQL.
-10. Users can view their submission and moderation results.
+10. Users can view their submissions and moderation results.
 
 ## Project Structure
 
@@ -72,6 +67,7 @@ ContentShield/
 │
 ├── public/
 ├── src/
+├── screenshots/
 ├── main.py
 ├── kafka_consumer.py
 ├── text_moderation.py
@@ -89,14 +85,14 @@ ContentShield/
 
 ## Database Structure
 
-The application uses PostgreSQL to store user information, submissions and moderation results.
+The application uses PostgreSQL to store user information, submissions, and moderation results.
 
 Main database tables:
 
 - **users:** Stores registered user information.
 - **submissions:** Stores submitted content details.
 - **submission_screenshots:** Stores screenshot paths associated with submissions.
-- **moderation_results:** Stores text moderation results, analysis status and processing information.
+- **moderation_results:** Stores text moderation results, analysis status, and processing information.
 - **image_moderation_results:** Stores image moderation scores and extracted text.
 
 Database name:
@@ -177,7 +173,7 @@ DB_PASSWORD=your_password
 
 Replace `your_password` with your actual PostgreSQL password.
 
-Never upload your actual `.env` file or database credentials to GitHub.
+**Never upload your actual `.env` file or database credentials to GitHub.**
 
 ### 5. Apache Kafka Setup
 
@@ -201,28 +197,42 @@ Start the Kafka consumer in a separate terminal:
 python kafka_consumer.py
 ```
 
-The consumer processes submitted content, performs AI moderation and saves the results in PostgreSQL.
+The consumer processes submitted content, performs AI moderation, and saves the results in PostgreSQL.
 
 ## Application URLs
 
 After starting the local application:
 
-| Service                   | URL                                                      |
-| ------------------------- | -------------------------------------------------------- |
-| React Frontend            | [http://localhost:5173/](http://localhost:5173/)         |
-| FastAPI Backend           | [http://127.0.0.1:8000](http://127.0.0.1:8000)           |
-| Swagger API Documentation | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) |
+| Service | URL |
+|---|---|
+| React Frontend | http://localhost:5173/ |
+| FastAPI Backend | http://127.0.0.1:8000/ |
+| Swagger API Documentation | http://127.0.0.1:8000/docs |
 
-## Screenshots
+## Application Screenshots
 
-Add actual application screenshots here to demonstrate:
+### Login Page
 
-- Login and Signup Pages
-- Basic Information Form
-- App Details Form
-- Review and Submission Page
-- Submission Results
-- AI Moderation Scores
+![Login Page](<screenshots/login page.png>)
+
+### Signup Page
+
+![Signup Page](<screenshots/Signup .png>)
+
+### Basic Information
+
+![Basic Information](<screenshots/Basic_info.png>)
+
+### App Details
+
+![App Details](<screenshots/App Details.png>)
+
+### Review Page
+
+![Review Page](<screenshots/Review page .png>)
+### My Submissions
+
+![My Submissions](<screenshots/my submissions.png>)
 
 ## Future Enhancements
 
@@ -234,12 +244,12 @@ Add actual application screenshots here to demonstrate:
 
 ## Project Objective
 
-The objective of ContentShield is to provide an integrated platform for screening text and image content through AI-powered moderation, OCR and automated processing.
+The objective of ContentShield is to provide an integrated platform for screening text and image content through AI-powered moderation, OCR, and automated processing.
 
-The project demonstrates the integration of frontend development, backend API development, database management, asynchronous messaging and AI-based content moderation.
+The project demonstrates the integration of frontend development, backend API development, database management, asynchronous messaging, and AI-based content moderation.
 
 ## Author
 
 **Umesh Kumar**
 
-GitHub: [https://github.com/gudisiumesh](https://github.com/gudisiumesh)
+GitHub: https://github.com/gudisiumesh
