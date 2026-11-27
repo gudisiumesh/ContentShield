@@ -1,15 +1,17 @@
-
+import { apiFetch, API_BASE_URL } from '../services/api'
 import { useEffect, useState } from 'react'
 
-const API_BASE_URL = 'https://contentshield-backend.onrender.com'
+
 
 const getImageUrl = (path) => {
   if (!path) return null
 
+  // Preserve existing absolute image URLs.
   if (path.startsWith('http://') || path.startsWith('https://')) {
     return path
   }
 
+  // Local images are served by the FastAPI backend.
   const formattedPath = path.replace(/\\/g, '/').replace(/^\/+/, '')
 
   return `${API_BASE_URL}/${formattedPath}`
@@ -35,7 +37,7 @@ function MySubmissions({ onPrevious }) {
       setFetchError('')
 
       try {
-        const response = await fetch(`${API_BASE_URL}/submissions`)
+       const response = await apiFetch('/submissions')
         const result = await response.json()
 
         if (!response.ok) {
@@ -50,7 +52,6 @@ function MySubmissions({ onPrevious }) {
 
         setSavedSubmissions(sortedSubmissions)
 
-        // New: Give every submission an initial Pending status.
         const initialResults = {}
 
         sortedSubmissions.forEach((submission) => {
@@ -62,12 +63,11 @@ function MySubmissions({ onPrevious }) {
 
         setModerationResults(initialResults)
 
-        // New: Fetch moderation results separately for each submission.
         sortedSubmissions.forEach(async (submission) => {
           try {
-            const moderationResponse = await fetch(
-              `${API_BASE_URL}/submissions/${submission.id}/moderation-results`
-            )
+            const moderationResponse = await apiFetch(
+  `/submissions/${submission.id}/moderation-results`
+)
 
             const moderationData = await moderationResponse.json()
 

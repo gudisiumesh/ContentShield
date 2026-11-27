@@ -3,15 +3,25 @@ import os
 import uuid
 import json
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
-import cloudinary
-import cloudinary.uploader
 import psycopg
-
+from psycopg.errors import UniqueViolation
 from dotenv import load_dotenv
 from kafka import KafkaProducer
+from pydantic import BaseModel
+from pwdlib import PasswordHash
+import jwt
 
-from fastapi import FastAPI, HTTPException, Form, File, UploadFile
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Form,
+    File,
+    UploadFile,
+    Depends,
+)
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -20,14 +30,8 @@ from fastapi.staticfiles import StaticFiles
 # Environment configuration
 # --------------------------------------------------
 
-load_dotenv()
-
-cloudinary.config(
-    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-    api_key=os.getenv("CLOUDINARY_API_KEY"),
-    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
-    secure=True
-)
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 
 # --------------------------------------------------
@@ -38,6 +42,96 @@ app = FastAPI(title="ContentShield API")
 
 
 # --------------------------------------------------
+# Authentication configuration
+# --------------------------------------------------
+
+password_hash = PasswordHash.recommended()
+
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+
+# --------------------------------------------------
+# JWT token verification
+# --------------------------------------------------
+
+def verify_token(token: str):
+
+    if not JWT_SECRET_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="JWT secret key is not configured."
+        )
+
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM]
+        )
+
+        return payload
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=401,
+            detail="Token has expired."
+        )
+
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authentication token."
+        )
+
+
+# --------------------------------------------------
+# HTTP Bearer authentication
+# --------------------------------------------------
+
+security = HTTPBearer()
+
+
+# --------------------------------------------------
+# Get current authenticated user
+# --------------------------------------------------
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+
+    token = credentials.credentials
+
+    payload = verify_token(token)
+
+    user_id = payload.get("sub")
+
+    if not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token payload."
+        )
+
+    return user_id
+
+
+# --------------------------------------------------
+# Authentication request models
+# --------------------------------------------------
+
+class SignupRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+# --------------------------------------------------
 # CORS configuration
 # --------------------------------------------------
 
@@ -45,7 +139,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5175",
-        "https://content-shield-bay.vercel.app"
+        "http://localhost:5173"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -54,11 +148,10 @@ app.add_middleware(
 
 
 # --------------------------------------------------
-# Upload directory
+# Local image storage
 # --------------------------------------------------
 
-UPLOAD_FOLDER = Path(__file__).resolve().parent / "uploads"
-
+UPLOAD_FOLDER = BASE_DIR / "uploads"
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
 app.mount(
@@ -67,78 +160,261 @@ app.mount(
     name="uploads"
 )
 
+MAX_FILE_SIZE = 5 * 1024 * 1024
 
-# --------------------------------------------------
-# Kafka producer
-# --------------------------------------------------
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
-producer = None
-
-
-def get_kafka_producer():
-    global producer
-
-    if producer is None:
-        try:
-            producer = KafkaProducer(
-                bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS"),
-                security_protocol="SASL_SSL",
-                sasl_mechanism="SCRAM-SHA-256",
-                sasl_plain_username=os.getenv("KAFKA_SASL_USERNAME"),
-                sasl_plain_password=os.getenv("KAFKA_SASL_PASSWORD"),
-                value_serializer=lambda data: json.dumps(data).encode("utf-8"),
-                request_timeout_ms=30000
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="Kafka service is currently unavailable."
-            ) from exc
-
-    return producer
-
-
-# --------------------------------------------------
-# Database connection
-# --------------------------------------------------
-
-def get_db_connection():
-    return psycopg.connect(
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT"),
-        dbname=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD")
-    )
-
-
-# --------------------------------------------------
-# Cloudinary file upload
-# --------------------------------------------------
 
 async def save_uploaded_file(file: UploadFile, folder_name: str):
 
     if not file or not file.filename:
         return None
 
-    try:
-        result = cloudinary.uploader.upload(
-            file.file,
-            folder=f"contentshield/{folder_name}",
-            public_id=uuid.uuid4().hex,
-            resource_type="image"
+    extension = Path(file.filename).suffix.lower()
+
+    if extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Only JPG, JPEG, PNG and WEBP images are allowed."
         )
+
+    try:
+        file_content = await file.read(MAX_FILE_SIZE + 1)
+
+        if len(file_content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail="Each image must be smaller than 5 MB."
+            )
+
+        folder_path = UPLOAD_FOLDER / folder_name
+        folder_path.mkdir(parents=True, exist_ok=True)
+
+        saved_filename = f"{uuid.uuid4().hex}{extension}"
+        saved_file_path = folder_path / saved_filename
+
+        saved_file_path.write_bytes(file_content)
+
+        relative_path = (
+            Path("uploads") / folder_name / saved_filename
+        ).as_posix()
 
         return {
             "original_filename": file.filename,
-            "saved_path": result["secure_url"],
-            "public_id": result["public_id"]
+            "saved_path": relative_path
         }
 
-    except Exception as exc:
+    except HTTPException:
+        raise
+
+    except OSError as exc:
         raise HTTPException(
-            status_code=502,
-            detail="File upload to cloud storage failed."
+            status_code=500,
+            detail="Could not save uploaded image locally."
+        ) from exc
+
+    finally:
+        await file.close()
+
+
+# --------------------------------------------------
+# Kafka producer - local Kafka
+# --------------------------------------------------
+
+producer = None
+
+
+def get_kafka_producer():
+
+    global producer
+
+    if producer is None:
+        try:
+            producer = KafkaProducer(
+                bootstrap_servers="localhost:9092",
+                value_serializer=lambda data: json.dumps(data).encode("utf-8"),
+                request_timeout_ms=30000
+            )
+
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Local Kafka service is currently unavailable."
+            ) from exc
+
+    return producer
+
+
+# --------------------------------------------------
+# PostgreSQL database connection
+# --------------------------------------------------
+
+def get_db_connection():
+
+    return psycopg.connect(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=os.getenv("DB_PORT", "5432"),
+        dbname=os.getenv("DB_NAME", "Contentshield_db"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD")
+    )
+
+
+# --------------------------------------------------
+# Signup endpoint
+# --------------------------------------------------
+
+@app.post("/auth/signup")
+def signup(request: SignupRequest):
+
+    full_name = request.full_name.strip()
+    email = request.email.strip().lower()
+
+    if not full_name:
+        raise HTTPException(
+            status_code=400,
+            detail="Full name is required."
+        )
+
+    if len(full_name) > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="Full name must not exceed 100 characters."
+        )
+
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(
+            status_code=400,
+            detail="Please enter a valid email address."
+        )
+
+    if len(email) > 255:
+        raise HTTPException(
+            status_code=400,
+            detail="Email address is too long."
+        )
+
+    if len(request.password) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must contain at least 8 characters."
+        )
+
+    hashed_password = password_hash.hash(request.password)
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    INSERT INTO users (
+                        full_name,
+                        email,
+                        hashed_password
+                    )
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (full_name, email, hashed_password)
+                )
+
+                user_id = cursor.fetchone()[0]
+
+        return {
+            "message": "Account created successfully.",
+            "user": {
+                "id": user_id,
+                "full_name": full_name,
+                "email": email
+            }
+        }
+
+    except UniqueViolation:
+        raise HTTPException(
+            status_code=409,
+            detail="Email already registered."
+        )
+
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Database error. Account could not be created."
+        ) from exc
+
+
+# --------------------------------------------------
+# Login endpoint
+# --------------------------------------------------
+
+@app.post("/auth/login")
+def login(request: LoginRequest):
+
+    if not JWT_SECRET_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="JWT secret key is not configured."
+        )
+
+    email = request.email.strip().lower()
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        full_name,
+                        email,
+                        hashed_password
+                    FROM users
+                    WHERE email = %s
+                    """,
+                    (email,)
+                )
+
+                user = cursor.fetchone()
+
+        if not user or not password_hash.verify(
+            request.password,
+            user[3]
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password."
+            )
+
+        payload = {
+            "sub": str(user[0]),
+            "exp": datetime.now(timezone.utc)
+            + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        }
+
+        token = jwt.encode(
+            payload,
+            JWT_SECRET_KEY,
+            algorithm=JWT_ALGORITHM
+        )
+
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {
+                "id": user[0],
+                "full_name": user[1],
+                "email": user[2]
+            }
+        }
+
+    except HTTPException:
+        raise
+
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Database error. Login could not be completed."
         ) from exc
 
 
@@ -148,23 +424,27 @@ async def save_uploaded_file(file: UploadFile, folder_name: str):
 
 @app.get("/")
 def home():
+
     return {
         "message": "ContentShield API is running"
     }
 
 
 # --------------------------------------------------
-# Get all submissions
+# Get submissions belonging to logged-in user
 # --------------------------------------------------
 
 @app.get("/submissions")
-def get_submissions():
+def get_submissions(
+    current_user: str = Depends(get_current_user)
+):
 
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT
                         s.id,
                         s.content_title,
@@ -179,8 +459,11 @@ def get_submissions():
                     FROM submissions s
                     LEFT JOIN submission_screenshots ss
                     ON s.id = ss.submission_id
+                    WHERE s.user_id = %s
                     ORDER BY s.id DESC
-                """)
+                    """,
+                    (int(current_user),)
+                )
 
                 rows = cursor.fetchall()
 
@@ -217,7 +500,7 @@ def get_submissions():
 
 
 # --------------------------------------------------
-# Create submission
+# Create submission - save authenticated user ID
 # --------------------------------------------------
 
 @app.post("/submissions")
@@ -231,46 +514,48 @@ async def create_submission(
 
     basic_info_image: UploadFile | None = File(None),
     app_icon: UploadFile | None = File(None),
-    screenshots: list[UploadFile] = File(default=[])
+    screenshots: list[UploadFile] = File(default=[]),
+
+    current_user: str = Depends(get_current_user)
 
 ):
 
     if len(screenshots) > 8:
         raise HTTPException(
             status_code=400,
-            detail="Maximum 8 screenshots are allowed"
+            detail="Maximum 8 screenshots are allowed."
         )
 
-    saved_basic_image = (
-        await save_uploaded_file(
-            basic_info_image,
-            "basic_info_images"
-        )
-        if basic_info_image else None
-    )
-
-    saved_app_icon = (
-        await save_uploaded_file(
-            app_icon,
-            "app_icons"
-        )
-        if app_icon else None
-    )
-
+    saved_basic_image = None
+    saved_app_icon = None
     saved_screenshots = []
 
-    for file in screenshots:
-
-        saved_file = await save_uploaded_file(
-            file,
-            "screenshots"
-        )
-
-        saved_screenshots.append(saved_file)
-
-    # Save submission in PostgreSQL.
-
     try:
+
+        if basic_info_image:
+            saved_basic_image = await save_uploaded_file(
+                basic_info_image,
+                "basic_info_images"
+            )
+
+        if app_icon:
+            saved_app_icon = await save_uploaded_file(
+                app_icon,
+                "app_icons"
+            )
+
+        for file in screenshots:
+
+            saved_file = await save_uploaded_file(
+                file,
+                "screenshots"
+            )
+
+            if saved_file:
+                saved_screenshots.append(saved_file)
+
+        # Save submission and authenticated user's ID in PostgreSQL.
+
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
 
@@ -283,9 +568,10 @@ async def create_submission(
                         content_source,
                         description,
                         basic_info_image,
-                        app_icon
+                        app_icon,
+                        user_id
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -297,7 +583,8 @@ async def create_submission(
                         saved_basic_image["saved_path"]
                         if saved_basic_image else None,
                         saved_app_icon["saved_path"]
-                        if saved_app_icon else None
+                        if saved_app_icon else None,
+                        int(current_user)
                     )
                 )
 
@@ -319,19 +606,23 @@ async def create_submission(
                         )
                     )
 
+    except HTTPException:
+        raise
+
     except psycopg.Error as exc:
         raise HTTPException(
             status_code=500,
             detail="Database error. Submission could not be saved."
         ) from exc
 
-    # Generate analysis run ID.
+    # Generate a unique analysis run ID.
 
     analysis_run_id = str(uuid.uuid4())
 
-    # Send submission event to Kafka.
+    # Send the submission event to local Kafka.
 
     try:
+
         kafka_producer = get_kafka_producer()
 
         kafka_producer.send(
@@ -367,23 +658,28 @@ async def create_submission(
 
 
 # --------------------------------------------------
-# Get moderation results
+# Get moderation results - verify submission ownership
 # --------------------------------------------------
 
 @app.get("/submissions/{submission_id}/moderation-results")
-def get_moderation_results(submission_id: int):
+def get_moderation_results(
+    submission_id: int,
+    current_user: str = Depends(get_current_user)
+):
 
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
 
+                # Verify that this submission belongs to the logged-in user.
+
                 cursor.execute(
                     """
                     SELECT id
                     FROM submissions
-                    WHERE id = %s
+                    WHERE id = %s AND user_id = %s
                     """,
-                    (submission_id,)
+                    (submission_id, int(current_user))
                 )
 
                 submission = cursor.fetchone()
@@ -451,15 +747,15 @@ def get_moderation_results(submission_id: int):
 
         for row in image_rows:
 
-            image_path = row[1]
+            image_path = row[1] or ""
 
-            if image_path and image_path.startswith(
-                ("https://", "http://")
-            ):
+            # Keep existing Cloudinary URLs working.
+
+            if image_path.startswith(("https://", "http://")):
                 image_url = image_path
 
             else:
-                image_path = (image_path or "").replace("\\", "/")
+                image_path = image_path.replace("\\", "/")
                 image_url = "/" + image_path.lstrip("/")
 
             images.append({

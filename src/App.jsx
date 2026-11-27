@@ -6,16 +6,149 @@ import SubmissionResults from './components/SubmissionResults'
 import BasicInformation from './components/BasicInformation'
 import AppDetails from './components/AppDetails'
 import MySubmissions from './components/MySubmissions'
+import Login from './components/Login'
+import Signup from './components/Signup'
+
+import { API_BASE_URL } from './services/api'
 
 import './App.css'
 import './style.css'
 
+
+function hasValidSession() {
+  const token = localStorage.getItem('access_token')
+  const user = localStorage.getItem('user')
+
+  if (!token || !user) {
+    return false
+  }
+
+  try {
+    const parts = token.split('.')
+
+    if (parts.length !== 3) {
+      return false
+    }
+
+    const payloadPart = parts[1]
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+
+    const paddedPayload = payloadPart.padEnd(
+      Math.ceil(payloadPart.length / 4) * 4,
+      '='
+    )
+
+    const payload = JSON.parse(atob(paddedPayload))
+
+    if (!payload.exp || payload.exp * 1000 <= Date.now()) {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('user')
+      return false
+    }
+
+    JSON.parse(user)
+
+    return true
+
+  } catch (error) {
+    console.error('Session validation error:', error)
+    return false
+  }
+}
+
+
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    () => hasValidSession()
+  )
+
+  const [authPage, setAuthPage] = useState('login')
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
 
   const [currentPage, setCurrentPage] = useState('basicInformation')
+
   const [basicInfo, setBasicInfo] = useState({})
   const [appDetails, setAppDetails] = useState({})
+
+  // Signup
+  const handleSignup = async (userData) => {
+    const response = await fetch(`${API_BASE_URL}/auth/signup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(userData)
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(
+        typeof result.detail === 'string'
+          ? result.detail
+          : 'Signup failed'
+      )
+    }
+
+    setAuthPage('login')
+  }
+
+  // Login
+  const handleLogin = async (userData) => {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(userData)
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(
+        typeof result.detail === 'string'
+          ? result.detail
+          : 'Invalid email or password'
+      )
+    }
+
+    localStorage.setItem('access_token', result.access_token)
+    localStorage.setItem('user', JSON.stringify(result.user))
+
+    setIsAuthenticated(true)
+    setCurrentPage('basicInformation')
+  }
+
+  // Logout
+  const handleLogout = () => {
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('user')
+
+    setIsAuthenticated(false)
+    setAuthPage('login')
+
+    setBasicInfo({})
+    setAppDetails({})
+    setCurrentPage('basicInformation')
+  }
+
+  // Show authentication pages when the user is not logged in.
+  if (!isAuthenticated) {
+    return authPage === 'signup' ? (
+      <Signup
+        onSignup={handleSignup}
+        onLogin={() => setAuthPage('login')}
+      />
+    ) : (
+      <Login
+        onLogin={handleLogin}
+        onSignup={() => setAuthPage('signup')}
+      />
+    )
+  }
 
   return (
     <div className="container">
@@ -34,6 +167,7 @@ function App() {
         </div>
 
         <div className="sidebar-menu">
+
           <h4>Content Submission</h4>
 
           <a
@@ -111,10 +245,10 @@ function App() {
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
           >
             <span className="menu-icon">
-  <span></span>
-  <span></span>
-  <span></span>
-</span>
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
           </button>
 
           <div className="nav-right">
@@ -124,9 +258,12 @@ function App() {
               Help
             </button>
 
-            <div className="profile">
-              <i className="fa-solid fa-chevron-down"></i>
-            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+            >
+              Logout
+            </button>
 
           </div>
 
@@ -175,8 +312,9 @@ function App() {
             onPrevious={() => setCurrentPage('submit')}
           />
         )}
-        
+
       </main>
+
     </div>
   )
 }

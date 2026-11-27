@@ -1,22 +1,21 @@
 
 from image_moderation import analyze_image
 from image_ocr import extract_text_from_image
+
 import os
+import json
 import psycopg
+
 from dotenv import load_dotenv
 from kafka import KafkaConsumer
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from text_moderation import analyze_text
 from pathlib import Path
-import json
-import requests
-import tempfile
 
-
-load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 DETOXIFY_MODEL = "original"
 NSFW_MODEL = "Falconsai/nsfw_image_detection"
@@ -25,12 +24,40 @@ NSFW_MODEL = "Falconsai/nsfw_image_detection"
 # Database connection
 def get_db_connection():
     return psycopg.connect(
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT"),
-        dbname=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
+        host=os.getenv("DB_HOST", "localhost"),
+        port=os.getenv("DB_PORT", "5432"),
+        dbname=os.getenv("DB_NAME", "Contentshield_db"),
+        user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD")
     )
+
+
+# Resolve locally stored image paths
+def resolve_image_path(stored_path):
+    if not stored_path:
+        raise FileNotFoundError("Image path is empty.")
+
+    # Cloudinary URLs belong to the previous cloud setup.
+    # Do not treat a URL as a local filesystem path.
+    if stored_path.startswith(("http://", "https://")):
+        raise ValueError(
+            "This image is stored as a cloud URL, not a local file. "
+            "It cannot be processed by the local consumer."
+        )
+
+    image_path = Path(stored_path)
+
+    if not image_path.is_absolute():
+        image_path = BASE_DIR / image_path
+
+    image_path = image_path.resolve()
+
+    if not image_path.is_file():
+        raise FileNotFoundError(
+            f"Image file was not found: {image_path}"
+        )
+
+    return image_path
 
 
 # Retrieve submission details and screenshot paths
@@ -93,7 +120,6 @@ def create_analysis_run(submission_id, analysis_run_id):
             if result is not None:
                 moderation_result_id = result[0]
 
-                # Commit the parent record before using its ID
                 conn.commit()
 
                 print("New analysis record created:", moderation_result_id)
@@ -114,7 +140,9 @@ def create_analysis_run(submission_id, analysis_run_id):
             existing_result = cur.fetchone()
 
             if existing_result is None:
-                raise Exception("Existing analysis record could not be found.")
+                raise Exception(
+                    "Existing analysis record could not be found."
+                )
 
             moderation_result_id, status = existing_result
 
@@ -149,7 +177,6 @@ def create_analysis_run(submission_id, analysis_run_id):
                 (moderation_result_id,)
             )
 
-            # Commit recovery changes
             conn.commit()
 
             print("Recovering existing analysis:", moderation_result_id)
@@ -262,14 +289,11 @@ def mark_analysis_failed(moderation_result_id, error):
     finally:
         conn.close()
 
-#kafka consumer
+
+# Kafka consumer
 consumer = KafkaConsumer(
     "content-submissions",
-    bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS"),
-    security_protocol="SASL_SSL",
-    sasl_mechanism="SCRAM-SHA-256",
-    sasl_plain_username=os.getenv("KAFKA_SASL_USERNAME"),
-    sasl_plain_password=os.getenv("KAFKA_SASL_PASSWORD"),
+    bootstrap_servers="localhost:9092",
     group_id="contentshield-ml-group",
     auto_offset_reset="earliest",
     enable_auto_commit=False,
@@ -350,31 +374,18 @@ for message in consumer:
 
             stored_path = image_item["image_path"]
 
-            # Download Cloudinary images or use existing local files
-            if stored_path.startswith(("https://", "http://")):
-                response = requests.get(stored_path, timeout=30)
-                response.raise_for_status()
+            # Locate the image in the local uploads folder
+            full_path = resolve_image_path(stored_path)
 
-                with tempfile.NamedTemporaryFile(suffix=".jpg") as temp_file:
-                    temp_file.write(response.content)
-                    temp_file.flush()
-
-                    image_to_process = temp_file.name
-
-                    extracted_text = extract_text_from_image(image_to_process)
-
-                    nsfw_scores = analyze_image(image_to_process)
-
-            else:
-                full_path = BASE_DIR / stored_path
-
-                extracted_text = extract_text_from_image(str(full_path))
-
-                nsfw_scores = analyze_image(str(full_path))
+            # Extract text from this image
+            extracted_text = extract_text_from_image(str(full_path))
 
             extracted_image_text.append(extracted_text)
 
             print("Extracted image text:", extracted_text)
+
+            # Analyze this image using the NSFW model
+            nsfw_scores = analyze_image(str(full_path))
 
             image_results.append({
                 "image_path": stored_path,
@@ -384,7 +395,6 @@ for message in consumer:
             })
 
             print("Image moderation scores:", nsfw_scores)
-
 
         # Combine original submission text
         original_text = " ".join([

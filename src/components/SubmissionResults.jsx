@@ -1,4 +1,4 @@
-
+import { apiFetch } from '../services/api'
 import { useState } from 'react'
 
 function SubmissionResults({ basicInfo, appDetails, onPrevious, onNext }) {
@@ -39,13 +39,10 @@ function SubmissionResults({ basicInfo, appDetails, onPrevious, onNext }) {
         formData.append('screenshots', file)
       })
 
-     const response = await fetch(
-  `${import.meta.env.VITE_API_URL}/submissions`,
-  {
-    method: 'POST',
-    body: formData
-  }
-)
+      const response = await apiFetch('/submissions', {
+  method: 'POST',
+  body: formData
+})
 
       const result = await response.json()
 
